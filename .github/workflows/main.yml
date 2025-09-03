@@ -27,8 +27,8 @@ jobs:
       - name: Zip Deployment Package
         run: |
           cd target
-          zip -r ../beanstalk-quote-gen-app.zip beanstalk-quote-gen-app.jar
-
+          zip -r ../beanstalk-quote-gen-app.zip . -i beanstalk-quote-gen-app.jar
+          
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
