@@ -18,17 +18,14 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Make Maven Wrapper Executable
-        run: chmod +x ./mvnw
-
       - name: Build with Maven
-        run: ./mvnw package
+        run: mvn clean package -DskipTests
 
-      - name: Zip Deployment Package
+      - name: Prepare Deployment Package
         run: |
-          cd target
-          zip -r ../beanstalk-quote-gen-app.zip . -i beanstalk-quote-gen-app.jar
-          
+          cp target/*.jar app.jar
+          zip beanstalk-quote-gen-app.zip app.jar
+
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
