@@ -1,4 +1,4 @@
-name: Deploy Java App to Elastic Beanstalk
+name: Java CI/CD to Elastic Beanstalk
 
 on:
   push:
@@ -8,48 +8,86 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
-
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Set up JDK
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
+          java-version: '17'
 
       - name: Build with Maven
-        run: mvn clean package -DskipTests
-
-      - name: Zip application bundle
         run: |
-          mkdir -p bundle
-          cp target/*.jar bundle/application.jar
-          cd bundle && zip -r app.zip .
+          # Package the application as a JAR file
+          mvn clean package -DskipTests
 
-      - name: Configure AWS Credentials
+      - name: Create deployment package
+        run: |
+          # Create a folder for Elastic Beanstalk deployment
+          mkdir deploy
+          # The artifact name depends on your pom.xml <artifactId> and <version>
+          cp target/*.jar ./deploy/application.jar
+          # Zip the deployment folder. Beanstalk expects a .zip file.
+          zip -r deploy.zip ./deploy
+
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-central-1
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Upload to S3
+      - name: Upload to S3 bucket
         run: |
-          aws s3 cp bundle/app.zip s3://$AWS_S3_BUCKET/app-${{ github.sha }}.zip
+          # Get a version label based on the commit SHA
+          VERSION_LABEL=$(echo $GITHUB_SHA | cut -c1-7)
+          # Upload the zip file to S3
+          aws s3 cp deploy.zip s3://${{ secrets.AWS_S3_BUCKET }}/application-v${VERSION_LABEL}.zip
 
-      - name: Create new Elastic Beanstalk application version
-        run: |
-          aws elasticbeanstalk create-application-version \
-            --application-name beanstalk-quote-gen-app \
-            --version-label ver-${{ github.sha }} \
-            --source-bundle S3Bucket="$AWS_S3_BUCKET",S3Key="app-${{ github.sha }}.zip"
+      - name: Deploy to Elastic Beanstalk
+        uses: einaregilsson/beanstalk-deploy@v22
+        with:
+          aws_access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          application_name: beanstalk-quote-gen-app
+          environment_name: Beanstalk-quote-gen-app-env
+          version_label: ${{ github.sha }}
+          region: ${{ secrets.AWS_REGION }}
+          existing_bucket_name: ${{ secrets.AWS_S3_BUCKET }}
+          deployment_package: deploy.zip
 
-      - name: Deploy to Elastic Beanstalk environment
+      - name: Wait for Environment to Stabilize
+        if: failure()
         run: |
-          aws elasticbeanstalk update-environment \
-            --environment-name Beanstalk-quote-gen-app-env \
-            --version-label ver-${{ github.sha }}
+          # Wait up to 5 minutes for the environment to become stable.
+          for i in $(seq 1 30); do
+            STATUS=$(aws elasticbeanstalk describe-environments --application-name simple-quote-gen-app --environment-names simple-quote-gen-app-env --query "Environments[0].HealthStatus" --output text)
+            if [ "$STATUS" == "Green" ] || [ "$STATUS" == "Red" ]; then
+              echo "Environment is stable with health status: $STATUS. Proceeding to get logs."
+              exit 0
+            fi
+            echo "Environment is not yet stable. Current status: $STATUS. Waiting 10 seconds..."
+            sleep 10
+          done
+          echo "Timeout waiting for environment to become stable. Proceeding to get logs anyway."
+          exit 0
+
+      - name: Download and Display Logs
+        # The `if: failure()` ensures this step only runs if a previous step failed.
+        if: failure()
+        run: |
+          # Use the AWS CLI to request logs from the environment
+          aws elasticbeanstalk request-environment-info --environment-name simple-quote-gen-app-env --info-type tail
+          sleep 15
+          # Download the logs and save them to a file
+          aws elasticbeanstalk retrieve-environment-info --application-name simple-quote-gen-app --environment-name simple-quote-gen-app-env --info-type tail --output text > eb-logs.txt
+          echo "================================================="
+          echo "Elastic Beanstalk Application Logs:"
+          echo "================================================="
+          # Print the contents of the log file to the GitHub Actions console
+          cat eb-logs.txt
+          echo "================================================="
+          echo "End of Logs"
+          echo "================================================="
