@@ -1,0 +1,54 @@
+name: Deploy Java App to Elastic Beanstalk
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
+
+      - name: Zip application bundle
+        run: |
+          mkdir -p bundle
+          cp target/*.jar bundle/application.jar
+          cd bundle && zip -r app.zip .
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+
+      - name: Upload to S3
+        run: |
+          aws s3 cp bundle/app.zip s3://$AWS_S3_BUCKET/app-${{ github.sha }}.zip
+
+      - name: Create new Elastic Beanstalk application version
+        run: |
+          aws elasticbeanstalk create-application-version \
+            --application-name beanstalk-quote-gen-app \
+            --version-label ver-${{ github.sha }} \
+            --source-bundle S3Bucket="$AWS_S3_BUCKET",S3Key="app-${{ github.sha }}.zip"
+
+      - name: Deploy to Elastic Beanstalk environment
+        run: |
+          aws elasticbeanstalk update-environment \
+            --environment-name Beanstalk-quote-gen-app-env \
+            --version-label ver-${{ github.sha }}
