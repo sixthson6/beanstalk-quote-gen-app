@@ -1,4 +1,4 @@
-name: Deploy Java App to Elastic Beanstalk
+name: Deploy to Elastic Beanstalk with S3
 
 on:
   push:
@@ -6,29 +6,25 @@ on:
       - main
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
-    env:
-      AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
-
     steps:
-      - name: Checkout source code
+      - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Set up JDK
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
+          java-version: '17'
 
       - name: Build with Maven
         run: mvn clean package -DskipTests
 
-      - name: Zip application bundle
+      - name: Prepare Deployment Package
         run: |
-          mkdir -p bundle
-          cp target/*.jar bundle/application.jar
-          cd bundle && zip -r app.zip .
+          cp target/*.jar app.jar
+          zip beanstalk-quote-gen-app.zip app.jar
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -38,18 +34,15 @@ jobs:
           aws-region: eu-central-1
 
       - name: Upload to S3
-        run: |
-          aws s3 cp bundle/app.zip s3://$AWS_S3_BUCKET/app-${{ github.sha }}.zip
+        run: aws s3 cp beanstalk-quote-gen-app.zip s3://${{ secrets.AWS_BUCKET_NAME }}/beanstalk-quote-gen-app-${{ github.sha }}.zip
 
-      - name: Create new Elastic Beanstalk application version
+      - name: Deploy to Elastic Beanstalk from S3
         run: |
           aws elasticbeanstalk create-application-version \
             --application-name beanstalk-quote-gen-app \
-            --version-label ver-${{ github.sha }} \
-            --source-bundle S3Bucket="$AWS_S3_BUCKET",S3Key="app-${{ github.sha }}.zip"
-
-      - name: Deploy to Elastic Beanstalk environment
-        run: |
+            --version-label ${{ github.sha }} \
+            --source-bundle S3Bucket="${{ secrets.AWS_BUCKET_NAME }}",S3Key="beanstalk-quote-gen-app-${{ github.sha }}.zip"
+          
           aws elasticbeanstalk update-environment \
             --environment-name Beanstalk-quote-gen-app-env \
-            --version-label ver-${{ github.sha }}
+            --version-label ${{ github.sha }}
