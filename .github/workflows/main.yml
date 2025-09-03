@@ -44,7 +44,7 @@ jobs:
           aws elasticbeanstalk create-application-version \
             --application-name beanstalk-quote-gen-app \
             --version-label ${{ github.sha }} \
-            --source-bundle S3Bucket="${{ secrets.AWS_BUCKET_NAME }}",S3Key="my-java-app-${{ github.sha }}.zip"
+            --source-bundle S3Bucket="${{ secrets.AWS_BUCKET_NAME }}",S3Key="beanstalk-quote-gen-app-${{ github.sha }}.zip"
           
           aws elasticbeanstalk update-environment \
             --environment-name Beanstalk-quote-gen-app-env \
